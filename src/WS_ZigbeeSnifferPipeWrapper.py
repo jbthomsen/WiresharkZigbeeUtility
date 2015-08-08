@@ -54,14 +54,27 @@ Parameters:
         Specify the serial port for the sniffer device, e.g. --port=COM8
         
     --channel=channel
-        Specify the channel to listen to, e.g. --channel=14 
+        Specify the channel to listen to, e.g. --channel=14
 
+    --encap
+        Specify the pcap encapsulation, 802.15.4 (default) or zepv1
+
+    --scan
+        Scan channels 11..26 starting from the one specified by --channel
+
+    --scan-interval
+        The interval, in seconds, to listen to every channel (default 30)
+
+    --scan-lock
+        Stop scanning after capturing the first packet 
 """
 
 import WS_SnifferAdapterFreescale
 import WS_SnifferLibPcapWrapper
+import WS_SnifferLibPcapZepWrapper
 import getopt, sys #, traceback
 from serial import SerialException
+import time
 #import binascii
 
 def usage(code, msg=''):
@@ -74,9 +87,16 @@ def usage(code, msg=''):
 def main():
     sPort = None # "COM8"
     channel = None # 14
+    before = None
+    scan = False
+    scanInterval = 30 * 1000 # 30s
+    scanLock = False
     
+    ENCAP = ["802.15.4", "zepv1"]
+    encap = ENCAP[0]
+
     try:
-        opts, args = getopt.getopt(sys.argv[1:], "hv", ["help", "port=", "channel=", "verbose"])
+        opts, args = getopt.getopt(sys.argv[1:], "hv", ["help", "port=", "channel=", "encap=", "scan", "scan-interval=", "scan-lock", "verbose"])
         
     except getopt.GetoptError, err:
         # print help information and exit:
@@ -92,12 +112,27 @@ def main():
             sPort = a
         elif o in ("--channel"):
             channel = int(a)
+        elif o in ("--encap"):
+            encap = a
+        elif o in ("--scan"):
+            scan = True
+        elif o in ("--scan-interval"):
+            scanInterval = int(a) * 1000
+        elif o in ("--scan-lock"):
+            scanLock = True
         else:
             assert False, "unhandled option"
 
     if (sPort is None) or (channel is None):
         usage("You must specify both serial port and channel, e.g.\n\n%s --port=COM8 --channel=14" % sys.argv[0])
         sys.exit()
+
+    if (not encap in ENCAP):
+        usage("Unsupported encapsulation %s" % encap)
+        sys.exit()
+
+    if (scan):
+        print "Scanning channels 11..26 starting from channel %d" % channel
 
     pipeWrapper = None
     try:
@@ -106,7 +141,11 @@ def main():
         snifferAdapter = WS_SnifferAdapterFreescale.cWS_SnifferWrapperMC1322x(sPort, channel)
         
         # Open named pipe to Wireshark
-        pipeWrapper = WS_SnifferLibPcapWrapper.cWS_IEEE802_15_4_LibPcapWrapper()
+        if (encap == ENCAP[0]): 
+            pipeWrapper = WS_SnifferLibPcapWrapper.cWS_IEEE802_15_4_LibPcapWrapper()
+        elif (encap == ENCAP[1]):
+            pipeWrapper = WS_SnifferLibPcapZepWrapper.cWS_ZEPv1_LibPcapWrapper()
+
         print "Configure Wireshark to listen to the name pipe '%s'" % (pipeWrapper.getPipeName())
         pipeWrapper.OpenPipe()
         
@@ -121,7 +160,20 @@ def main():
                 i = i + 1
                 sys.stdout.write("%d\r" % i)
                 sys.stdout.flush()
-                pipeWrapper.WriteRecord(dataFrm)
+                pipeWrapper.WriteRecord(dataFrm, channel)
+
+            lock = not scan or (i > 0 and scanLock)
+            if (not lock):
+                now = time.time() * 1000.0
+                if (before == None):
+                    before = now
+                if ((now - before) >= scanInterval):
+                    before = now
+                    channel += 1
+                    if (channel > 26):
+                        channel = 11
+                    snifferAdapter.ChangeLogicalChannel(channel)
+                    print "Changed to channel %d" % channel
                 
     except SerialException, err:
         sys.stderr.write('ERROR: %s\n' % str(err))

@@ -119,7 +119,7 @@ class cWS_IEEE802_15_4_LibPcapWrapper:
             os.write(self.p, struct.pack("<L",200)) # u32Snaplen: max length saved portion of each pkt
             os.write(self.p, struct.pack("<L",DLT_IEEE802_15_4)) # u32LinkType: data link type (LINKTYPE_*) 
     
-    def WriteRecord(self, snifferDataFrm):
+    def WriteRecord(self, snifferDataFrm, channel):
         pktLen = snifferDataFrm.getMsduLen()
         timeStamp = MICROS_PER_SYMBOL * snifferDataFrm.getTimeStamp()
     
